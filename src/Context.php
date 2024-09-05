@@ -2,9 +2,10 @@
 
 namespace Dumbo;
 
-use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Message\ResponseInterface;
+use Dumbo\Helpers\View;
 use GuzzleHttp\Psr7\Response;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * Context class for handling request and response in the Dumbo framework
@@ -176,5 +177,10 @@ class Context
     public function getResponse(): ResponseInterface
     {
         return $this->response;
+    }
+
+    public function view(...$params)
+    {
+        return $this->html(View::view(...$params));
     }
 }

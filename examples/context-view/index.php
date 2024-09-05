@@ -4,15 +4,14 @@ require "vendor/autoload.php";
 
 use Dumbo\Dumbo;
 use Latte\Engine;
+use Dumbo\Context;
+use Dumbo\Helpers\View;
 
 $app = new Dumbo();
 
-// Return as HTML
-return $c->html($html);
-
-// Context middleware for all routes
-$app->use(function ($context, $next) {
-    $context->set('view', function (string $view, array $attributes) {
+// $app->use(
+View::driver(
+    function (string $view, array $attributes) {
         // Instantiate our Template Engine
         $latte = new Engine();
 
@@ -28,21 +27,26 @@ $app->use(function ($context, $next) {
         $latte->setTempDirectory($cacheDirectory);
 
         // Render our HTML string from our view and attributes.
-        return $latte->renderToString($view, $attributes);
-    });
+        $html = $latte->renderToString($view, $attributes);
 
-    return $next($context);
-});
+        return $html;
+    }
+);
+// );
 
 $app->get("/", function ($context) {
-    $view = $context->get('view');
-
-    var_dump($view);
-    die();
-
-    return $context->json([
-        "message" => $message,
+    $view = $context->view('home.latte', [
+        'message' => 'Dumbo'
     ]);
+
+    return $view;
+
+    // dump($view);
+    // die();
+
+    // return $context->json([
+    //     "message" => $message,
+    // ]);
 });
 
 $app->run();
