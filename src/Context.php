@@ -2,9 +2,14 @@
 
 namespace Dumbo;
 
-use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Message\ResponseInterface;
+use Throwable;
+use ReflectionMethod;
+use RuntimeException;
+use ArgumentCountError;
 use GuzzleHttp\Psr7\Response;
+use InvalidArgumentException;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * Context class for handling request and response in the Dumbo framework
@@ -45,13 +50,26 @@ class Context
     /**
      * Set a variable in the context
      *
-     * @param string $key The variable name
-     * @param mixed $value The variable value
+     * @param string|class-string $key The variable name or a class name
+     * @param mixed ...$value The variable value(s) or constructor arguments
      */
-    public function set(string $key, mixed $value): void
+    public function set(string|object $key, mixed ...$value): void
     {
-        $this->variables[$key] = $value;
+        if (is_string($key) && class_exists($key)) {
+            $this->variables[$key] = new $key(...$value);
+
+            return;
+        }
+
+        if (is_string($key)) {
+            $this->variables[$key] = count($value) === 1 ? $value[0] : $value;
+
+            return;
+        }
+
+        throw new InvalidArgumentException("Invalid key type. Expected a string or class name.");
     }
+
 
     /**
      * Get a variable from the context
