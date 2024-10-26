@@ -14,6 +14,29 @@ class Cookie
     public const PREFIX_HOST = "host";
 
     /**
+     * Check if a cookie exists
+     *
+     * @param Context $context The context object containing request information
+     * @param string $name The name of the cookie to check
+     * @param string|null $value Optional value to check against
+     * @param string $prefix Optional prefix for the cookie name
+     * @return bool True if the cookie exists (and optionally matches the value), false otherwise
+     */
+    public static function has(
+        Context $context,
+        string $name,
+        ?string $value = null,
+        string $prefix = ""
+    ): bool {
+        $cookies = self::parse($context->req->header("Cookie") ?? "");
+        $fullName = self::getPrefixedName($name, $prefix);
+        $cookieValue = $cookies[$fullName] ?? null;
+
+        return $cookieValue !== null &&
+            ($value === null || $cookieValue === $value);
+    }
+
+    /**
      * Get all cookies or a specific cookie.
      *
      * @param Context $context The context object containing request information
@@ -21,24 +44,20 @@ class Cookie
      * @param string|null $prefix Optional prefix for the cookie name (e.g., "secure" or "host")
      * @return array|string|null An array of all cookies, the value of a specific cookie, or null if not found
      */
-    public static function getCookie(
+    public static function get(
         Context $context,
         ?string $name = null,
         ?string $prefix = null
     ): array|string|null {
-        $cookies = $context->req->header("Cookie");
-        if (!$cookies) {
-            return $name ? null : [];
-        }
-
-        $parsedCookies = self::parseCookies($cookies);
+        $cookies = self::parse($context->req->header("Cookie") ?? "");
 
         if ($name === null) {
-            return $parsedCookies;
+            return $cookies;
         }
 
         $fullName = self::getPrefixedName($name, $prefix);
-        return $parsedCookies[$fullName] ?? null;
+
+        return $cookies[$fullName] ?? null;
     }
 
     /**
@@ -49,13 +68,13 @@ class Cookie
      * @param string $value The value of the cookie
      * @param array $options Additional options for the cookie (e.g., 'expires', 'path', 'domain', etc.)
      */
-    public static function setCookie(
+    public static function set(
         Context $context,
         string $name,
         string $value,
         array $options = []
     ): void {
-        $cookieString = self::buildCookieString($name, $value, $options);
+        $cookieString = self::buildString($name, $value, $options);
         $context->header("Set-Cookie", $cookieString);
     }
 
@@ -67,14 +86,22 @@ class Cookie
      * @param array $options Additional options for the cookie deletion (e.g., 'path', 'domain')
      * @return string|null The value of the deleted cookie, or null if it didn't exist
      */
-    public static function deleteCookie(
+    public static function delete(
         Context $context,
         string $name,
         array $options = []
     ): ?string {
-        $value = self::getCookie($context, $name);
+        $prefix = $options["prefix"] ?? "";
+        $value = self::get($context, $name, $prefix);
+
+        if ($value === null) {
+            return null;
+        }
+
         $options["expires"] = 1;
-        self::setCookie($context, $name, "", $options);
+        $options["path"] = $options["path"] ?? "/";
+        self::set($context, $name, "", $options);
+
         return $value;
     }
 
@@ -87,36 +114,19 @@ class Cookie
      * @param string|null $prefix Optional prefix for the cookie name
      * @return mixed The value of the signed cookie, an array of all signed cookies, or null/false if verification fails
      */
-    public static function getSignedCookie(
+    public static function getSigned(
         Context $context,
         string $secret,
         ?string $name = null,
         ?string $prefix = null
     ): mixed {
-        if ($name === null) {
-            $allCookies = self::getCookie($context);
-            $signedCookies = [];
+        $value = self::get($context, $name, $prefix);
 
-            foreach ($allCookies as $cookieName => $cookieValue) {
-                $verifiedValue = self::verifySignedCookie(
-                    $cookieValue,
-                    $secret
-                );
-
-                if ($verifiedValue !== false) {
-                    $signedCookies[$cookieName] = $verifiedValue;
-                }
-            }
-
-            return $signedCookies;
-        }
-
-        $value = self::getCookie($context, $name, $prefix);
         if ($value === null) {
             return null;
         }
 
-        return self::verifySignedCookie($value, $secret);
+        return self::verifySigned($value, $secret);
     }
 
     /**
@@ -128,7 +138,7 @@ class Cookie
      * @param string $secret The secret key used for signing
      * @param array $options Additional options for the cookie
      */
-    public static function setSignedCookie(
+    public static function setSigned(
         Context $context,
         string $name,
         string $value,
@@ -137,7 +147,50 @@ class Cookie
     ): void {
         $signature = self::sign($value, $secret);
         $signedValue = $value . "." . $signature;
-        self::setCookie($context, $name, $signedValue, $options);
+
+        self::set($context, $name, $signedValue, $options);
+    }
+
+    /**
+     * Refresh a cookie's expiration time if it exists.
+     *
+     * @param Context $context The context object for setting the response header
+     * @param string $name The name of the cookie to refresh
+     * @param array $options Additional options for the cookie
+     * @return bool True if the cookie was refreshed, false if it doesn't exist
+     */
+    public static function refresh(
+        Context $context,
+        string $name,
+        array $options = []
+    ): bool {
+        $prefix = $options["prefix"] ?? "";
+        $value = self::get($context, $name, $prefix);
+
+        if ($value === null) {
+            return false;
+        }
+
+        self::set($context, $name, $value, $options);
+
+        return true;
+    }
+
+    /**
+     * Clear all cookies.
+     *
+     * @param Context $context The context object for setting the response header
+     */
+    public static function clearAll(Context $context): void
+    {
+        $cookies = self::get($context);
+
+        foreach ($cookies as $name => $value) {
+            $context->header(
+                "Set-Cookie",
+                $name . "=; Expires=Thu, 01 Jan 1970 00:00:01 GMT"
+            );
+        }
     }
 
     /**
@@ -146,16 +199,22 @@ class Cookie
      * @param string $cookieString The raw cookie string from the HTTP header
      * @return array An associative array of cookie names and values
      */
-    private static function parseCookies(string $cookieString): array
+    private static function parse(string $cookieString): array
     {
         $cookies = [];
+        if (empty($cookieString)) {
+            return $cookies;
+        }
+
         $pairs = explode("; ", $cookieString);
+
         foreach ($pairs as $pair) {
             $parts = explode("=", $pair, 2);
             if (count($parts) === 2) {
                 $cookies[urldecode($parts[0])] = urldecode($parts[1]);
             }
         }
+
         return $cookies;
     }
 
@@ -167,7 +226,7 @@ class Cookie
      * @param array $options Additional options for the cookie
      * @return string The formatted cookie string
      */
-    private static function buildCookieString(
+    private static function buildString(
         string $name,
         string $value,
         array $options
@@ -206,10 +265,6 @@ class Cookie
 
         if (isset($options["sameSite"])) {
             $parts[] = "SameSite=" . $options["sameSite"];
-        }
-
-        if (isset($options["partitioned"]) && $options["partitioned"]) {
-            $parts[] = "Partitioned";
         }
 
         return implode("; ", $parts);
@@ -253,16 +308,18 @@ class Cookie
      * @param string $secret The secret key used for signing
      * @return string|false The verified cookie value, or false if verification fails
      */
-    private static function verifySignedCookie(
+    private static function verifySigned(
         string $value,
         string $secret
     ): string|false {
         $parts = explode(".", $value, 2);
+
         if (count($parts) !== 2) {
             return false;
         }
 
         list($value, $signature) = $parts;
+
         $expectedSignature = self::sign($value, $secret);
 
         if (!hash_equals($signature, $expectedSignature)) {

@@ -1,8 +1,6 @@
 {
   "require": {
-    "notrab/dumbo": "@dev",
-    "latte/latte": "^3.0",
-    "turso/libsql": "@dev"
+    "notrab/dumbo": "@dev"
   },
   "repositories": [
     {
@@ -13,8 +11,7 @@
   "scripts": {
     "start": [
       "Composer\\Config::disableProcessTimeout",
-      "php -d \"ffi.enable=1\" -S localhost:8000 -t ."
+      "php -S localhost:8000 -t ."
     ]
-  },
-  "prefer-stable": false
+  }
 }
